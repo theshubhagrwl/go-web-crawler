@@ -9,3 +9,6 @@
 * Stored only the absolute URLs and not the dynamic ones
 * Separated get call in a method
 * Implemented BFS
+* - 
+* Added Queue DS
+* Added a struct for Crawled Set

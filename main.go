@@ -11,7 +11,45 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
-func getLinks(url string) []string {
+type Queue struct {
+	size     int
+	elements []string
+}
+
+func (q *Queue) getSize() int {
+	return q.size
+}
+
+func (q *Queue) enqueue(url string) {
+	q.elements = append(q.elements, url)
+	q.size++
+}
+
+func (q *Queue) dequeue() string {
+	url := q.elements[0]
+	q.elements = q.elements[1:]
+	q.size--
+	return url
+}
+
+type Crawled struct {
+	data map[string]bool
+	size int
+}
+
+func (c *Crawled) getCrawledSetSize() int {
+	return c.size
+}
+
+func (c *Crawled) add(url string) {
+	c.data[url] = true
+	c.size++
+}
+func (c *Crawled) has(url string) bool {
+	return c.data[url]
+}
+
+func parseHTML(url string, q *Queue) {
 	resp, err := http.Get(url)
 	if err != nil {
 		fmt.Printf("Error occured %s", err)
@@ -21,7 +59,6 @@ func getLinks(url string) []string {
 	if err != nil {
 		fmt.Printf("Error reading body : %v", err)
 	}
-	links := make([]string, 0)
 	doc, err := html.Parse(bytes.NewReader(body))
 	if err != nil {
 		fmt.Printf("Error parsing body: %v", err)
@@ -31,39 +68,37 @@ func getLinks(url string) []string {
 			for _, a := range n.Attr {
 				//storing only the absolute urls
 				if a.Key == "href" && strings.HasPrefix(a.Val, "https://") {
-					links = append(links, a.Val)
-					// break
+					q.enqueue(a.Val)
 				}
 			}
 		}
 	}
-	return links
 }
 
 func main() {
 	fmt.Println("Starting!")
 
-	links := getLinks("https://www.example.com/")
+	queue := Queue{size: 0, elements: make([]string, 0)}
+	crawled := Crawled{data: make(map[string]bool), size: 0}
+
+	const initialUrl = "https://www.theshubhagrwl.in/"
+	// const initialUrl = "https://www.example.com/"
+	queue.enqueue(initialUrl)
+	crawled.add(initialUrl)
+	queue.dequeue()
+	parseHTML(initialUrl, &queue)
 
 	//bfs
-	visited := make(map[string]bool)
 	count := 0
-	for len(links) > 0 {
-		curr := links[0]
-		links = links[1:]
-
-		if !visited[curr] {
-			newLinks := getLinks(curr)
-			fmt.Printf("accessed: %v \n", curr)
-			visited[curr] = true
-			links = append(links, newLinks...)
+	for queue.getSize() > 0 && count < 10 {
+		curr := queue.dequeue()
+		if !crawled.has(curr) {
+			parseHTML(curr, &queue)
+			fmt.Printf("visiting: %s\n", curr)
+			crawled.add(curr)
 			count++
 		}
-
-		if count == 10 {
-			fmt.Println(visited)
-			break
-		}
 	}
+	fmt.Println(crawled)
 
 }

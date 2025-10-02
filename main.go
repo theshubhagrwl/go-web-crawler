@@ -104,8 +104,6 @@ func parseHTML(db *DbConnection, url string, q *Queue) {
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 
-	db.addWebPageToDb(url, string(body))
-
 	if err != nil {
 		fmt.Printf("Error reading body : %v", err)
 	}
@@ -113,16 +111,42 @@ func parseHTML(db *DbConnection, url string, q *Queue) {
 	if err != nil {
 		fmt.Printf("Error parsing body: %v", err)
 	}
-	for n := range doc.Descendants() {
+
+	var bodyText string
+
+	// Walk the DOM
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.DataAtom == atom.Body {
+			bodyText = collectText(n)
+		}
+
 		if n.Type == html.ElementNode && n.DataAtom == atom.A {
 			for _, a := range n.Attr {
-				//storing only the absolute urls
 				if a.Key == "href" && strings.HasPrefix(a.Val, "https://") {
 					q.enqueue(a.Val)
 				}
 			}
 		}
+
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+		}
 	}
+	f(doc)
+
+	db.addWebPageToDb(url, bodyText)
+}
+
+func collectText(n *html.Node) string {
+	if n.Type == html.TextNode {
+		return strings.TrimSpace(n.Data) + " "
+	}
+	var sb strings.Builder
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		sb.WriteString(collectText(c))
+	}
+	return sb.String()
 }
 
 func main() {
@@ -143,7 +167,7 @@ func main() {
 
 	//bfs
 	count := 0
-	for queue.getSize() > 0 && count < 10 {
+	for queue.getSize() > 0 && count < 1 {
 		curr := queue.dequeue()
 		if !crawled.has(curr) {
 			parseHTML(&db, curr, &queue)

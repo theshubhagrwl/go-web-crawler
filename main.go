@@ -2,10 +2,15 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+
+	"log"
+
+	_ "github.com/mattn/go-sqlite3"
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
@@ -49,13 +54,58 @@ func (c *Crawled) has(url string) bool {
 	return c.data[url]
 }
 
-func parseHTML(url string, q *Queue) {
+type DbConnection struct {
+	db       string
+	fileName string
+	conn     *sql.DB
+}
+
+func (db *DbConnection) connect() {
+	db.db = "sqlite3"
+	db.fileName = "./webpages.db"
+	connection, err := sql.Open(db.db, db.fileName)
+	db.conn = connection
+	if err != nil {
+		log.Fatal(err)
+	}
+	initialSqlStatement := `create table if not exists webpages (id integer not null primary key, url TEXT, content TEXT);`
+	_, err = db.conn.Exec(initialSqlStatement)
+	if err != nil {
+		log.Printf("%q: %s\n", err, initialSqlStatement)
+		return
+	}
+}
+
+func (db *DbConnection) disconnect() {
+	db.conn.Close()
+}
+
+func (db *DbConnection) addWebPageToDb(url string, content string) {
+	_, err := db.conn.Exec(
+		"INSERT INTO webpages (url, content) VALUES (?, ?)",
+		url, content,
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+type Webpage struct {
+	Url     string
+	Title   string
+	Content string
+}
+
+func parseHTML(db *DbConnection, url string, q *Queue) {
 	resp, err := http.Get(url)
 	if err != nil {
 		fmt.Printf("Error occured %s", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
+
+	db.addWebPageToDb(url, string(body))
+
 	if err != nil {
 		fmt.Printf("Error reading body : %v", err)
 	}
@@ -78,27 +128,32 @@ func parseHTML(url string, q *Queue) {
 func main() {
 	fmt.Println("Starting!")
 
+	db := DbConnection{db: "sqlite3", fileName: "./webpages.db", conn: nil}
+	db.connect()
+
 	queue := Queue{size: 0, elements: make([]string, 0)}
 	crawled := Crawled{data: make(map[string]bool), size: 0}
 
 	const initialUrl = "https://www.theshubhagrwl.in/"
-	// const initialUrl = "https://www.example.com/"
+
 	queue.enqueue(initialUrl)
 	crawled.add(initialUrl)
 	queue.dequeue()
-	parseHTML(initialUrl, &queue)
+	parseHTML(&db, initialUrl, &queue)
 
 	//bfs
 	count := 0
 	for queue.getSize() > 0 && count < 10 {
 		curr := queue.dequeue()
 		if !crawled.has(curr) {
-			parseHTML(curr, &queue)
+			parseHTML(&db, curr, &queue)
 			fmt.Printf("visiting: %s\n", curr)
 			crawled.add(curr)
 			count++
 		}
 	}
 	fmt.Println(crawled)
+
+	db.disconnect()
 
 }

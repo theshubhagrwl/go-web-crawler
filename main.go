@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"log"
 
@@ -19,38 +21,55 @@ import (
 type Queue struct {
 	size     int
 	elements []string
+	mu       sync.Mutex
 }
 
 func (q *Queue) getSize() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	return q.size
 }
 
 func (q *Queue) enqueue(url string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	q.elements = append(q.elements, url)
 	q.size++
 }
 
-func (q *Queue) dequeue() string {
+func (q *Queue) dequeue() (string, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.elements) == 0 {
+		return "", false
+	}
 	url := q.elements[0]
 	q.elements = q.elements[1:]
-	q.size--
-	return url
+	return url, true
 }
 
 type Crawled struct {
 	data map[string]bool
 	size int
+	mu   sync.Mutex
 }
 
 func (c *Crawled) getCrawledSetSize() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.size
 }
 
 func (c *Crawled) add(url string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.data[url] = true
 	c.size++
 }
+
 func (c *Crawled) has(url string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.data[url]
 }
 
@@ -96,7 +115,10 @@ type Webpage struct {
 	Content string
 }
 
-func parseHTML(db *DbConnection, url string, q *Queue) {
+func parseHTML(db *DbConnection, url string, q *Queue, sem chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
+	defer func() { <-sem }()
+
 	resp, err := http.Get(url)
 	if err != nil {
 		fmt.Printf("Error occured %s", err)
@@ -134,7 +156,7 @@ func parseHTML(db *DbConnection, url string, q *Queue) {
 		}
 	}
 	f(doc)
-
+	fmt.Printf("Added %s \n", url)
 	db.addWebPageToDb(url, bodyText)
 }
 
@@ -161,23 +183,34 @@ func main() {
 	const initialUrl = "https://www.theshubhagrwl.in/"
 
 	queue.enqueue(initialUrl)
-	crawled.add(initialUrl)
-	queue.dequeue()
-	parseHTML(&db, initialUrl, &queue)
+
+	sem := make(chan struct{}, 5)
+	var wg sync.WaitGroup
 
 	//bfs
 	count := 0
-	for queue.getSize() > 0 && count < 1 {
-		curr := queue.dequeue()
-		if !crawled.has(curr) {
-			parseHTML(&db, curr, &queue)
-			fmt.Printf("visiting: %s\n", curr)
-			crawled.add(curr)
-			count++
+	for count < 10 {
+		url, ok := queue.dequeue()
+		if !ok {
+			if len(sem) == 0 {
+				break
+			}
+			// if some are still active, wait briefly and check again
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
+		if crawled.has(url) {
+			continue
+		}
+		count++
+		sem <- struct{}{}
+		wg.Add(1)
+		go parseHTML(&db, url, &queue, sem, &wg)
+		crawled.add(url)
 	}
-	fmt.Println(crawled)
+
+	wg.Wait()
+	// fmt.Println(crawled)
 
 	db.disconnect()
-
 }

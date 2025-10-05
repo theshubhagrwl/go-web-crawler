@@ -177,6 +177,8 @@ func main() {
 	db := DbConnection{db: "sqlite3", fileName: "./webpages.db", conn: nil}
 	db.connect()
 
+	startTime := time.Now()
+
 	queue := Queue{size: 0, elements: make([]string, 0)}
 	crawled := Crawled{data: make(map[string]bool), size: 0}
 
@@ -211,6 +213,12 @@ func main() {
 
 	wg.Wait()
 	// fmt.Println(crawled)
-
+	timeElapsed := time.Since(startTime)
 	db.disconnect()
+
+	fmt.Println("\n------CRAWLER STATS------")
+	fmt.Printf("Crawled: %d \n", crawled.getCrawledSetSize())
+	fmt.Printf("To be crawled (in queue): %d\n", queue.getSize())
+	fmt.Printf("Total Time Taken: %v", timeElapsed)
+
 }
